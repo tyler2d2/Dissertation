@@ -107,7 +107,7 @@ comparison_table$category[is.na(comparison_table$category)] <- "No category assi
 
 comparison_table$is_traeuble_marker <- comparison_table$gene %in% names(traeuble_gene_to_categories)
 
-# attach Traeuble level1 categories 
+# attach Traeuble level1 categories (may be multiple)
 comparison_table$traeuble_categories <- sapply(comparison_table$gene, function(g) {
   ct <- traeuble_gene_to_categories[[g]]
   if (is.null(ct)) "" else paste(sort(unique(ct)), collapse = "; ")
@@ -137,4 +137,51 @@ by_category <- traeuble_markers %>%
   arrange(desc(n_overlap))
 
 write.csv(by_category,
-          "/Users/tyleradams/Desktop/DISS/consensus_vs
+          "/Users/tyleradams/Desktop/DISS/consensus_vs_traeuble_by_category.csv",
+          row.names = FALSE)
+
+cat("Saved consensus_vs_traeuble_by_category.csv\n")
+cat("[5/5] Done. Script complete.\n")
+
+
+cat("Generating overlap bar plots...\n")
+
+# gene-level bar
+df_gene_bar <- data.frame(
+  category = c("Overlap", "Consensus only"),
+  count = c(
+    sum(comparison_table$is_traeuble_marker),
+    sum(!comparison_table$is_traeuble_marker)
+  )
+)
+
+p_gene <- ggplot(df_gene_bar, aes(x = category, y = count, fill = category)) +
+  geom_bar(stat = "identity") +
+  theme_minimal(base_size = 14) +
+  labs(title = "Gene-level Overlap", x = "", y = "Number of Genes") +
+  scale_fill_manual(values = c("#0072B2", "#999999")) +
+  theme(legend.position = "none")
+
+# cell-type bar
+df_cell_bar <- by_category %>%
+  mutate(level1 = factor(level1, levels = level1[order(n_overlap, decreasing = TRUE)]))
+
+p_cell <- ggplot(df_cell_bar, aes(x = level1, y = n_overlap, fill = level1)) +
+  geom_bar(stat = "identity") +
+  theme_minimal(base_size = 14) +
+  labs(title = "Cell-type Overlap", x = "Traeuble Level 1 Cell Type", y = "Overlapping Genes") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3") +
+  theme(legend.position = "none")
+
+combined_plot <- p_gene + p_cell + plot_layout(ncol = 2)
+
+ggsave(
+  "/Users/tyleradams/Desktop/DISS/figures/traeuble_combined_overlap_barplot.jpeg",
+  plot = combined_plot,
+  width = 14,
+  height = 6,
+  dpi = 300
+)
+
+cat("Saved traeuble_combined_overlap_barplot.jpeg\n")
