@@ -1,52 +1,60 @@
-library(Seurat)  
-library(dplyr)     
-library(ggplot2)    
-library(patchwork)   
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
 
-set.seed(42)         # reproducibility
+set.seed(42)   # keep runs reproducible
 
-cat("[1/5] Loading Traeuble Supplementary Table 1 marker genes...\n")   # step 1
+cat("[1/5] Loading Traeuble atlas level1 markers (filtered)...\n")
 
 traeuble_markers <- read.csv(
-  "/Users/tyleradams/Desktop/DISS/traeuble_supp_table1_markers.csv",
+  "/Users/tyleradams/Desktop/DISS/plaque_atlas_level1_markers_filtered.csv",
   stringsAsFactors = FALSE
 )
 
-traeuble_markers$gene <- toupper(traeuble_markers$gene)                 # uppercase
+colnames(traeuble_markers) <- tolower(colnames(traeuble_markers))
 
-cat("Loaded", nrow(traeuble_markers), "marker rows across",
-    length(unique(traeuble_markers$level1)), "Traeuble level1 categories.\n")
+# normalise column names + uppercase genes
+traeuble_markers <- traeuble_markers %>%
+  transmute(
+    gene = toupper(gene),
+    level1 = cell_type_level1
+  )
+
+cat("Loaded", nrow(traeuble_markers), "Traeuble markers across",
+    length(unique(traeuble_markers$level1)), "level1 categories.\n")
 cat("[1/5] Done.\n\n")
 
-cat("[2/5] Loading consensus_panel_480.csv...\n")                       # step 2
+
+cat("[2/5] Loading consensus panel...\n")
 
 consensus <- read.csv("/Users/tyleradams/Desktop/DISS/consensus_panel_480.csv")
 colnames(consensus)[1] <- "gene"
 consensus$gene <- toupper(consensus$gene)
 
-cat("Loaded", nrow(consensus), "consensus genes\n")
+cat("Loaded", nrow(consensus), "consensus genes.\n")
 cat("[2/5] Done.\n\n")
 
-cat("[3/5] Loading precomputed Seurat object...\n")                     # step 3
+
+cat("[3/5] Loading Seurat object + computing markers...\n")
 
 seurat_obj <- readRDS("/Users/tyleradams/Desktop/DISS/arterial_seurat_processed.rds")
-cat("Seurat object loaded OK\n")
+cat("Seurat object loaded.\n")
 
-cat("Computing marker genes directly per cell_type...\n")
+Idents(seurat_obj) <- seurat_obj$cell_type   # use provided cell-type labels
 
-Idents(seurat_obj) <- seurat_obj$cell_type                             # set identities
-
-markers <- FindAllMarkers(                                              # marker detection
+markers <- FindAllMarkers(
   seurat_obj,
   only.pos = TRUE,
   logfc.threshold = 0.25,
   min.pct = 0.1
 )
 
-cat("Loaded", nrow(markers), "marker rows across",
-    length(unique(markers$cluster)), "cell types\n")
+cat("Detected", nrow(markers), "marker rows across",
+    length(unique(markers$cluster)), "cell types.\n")
 
-gene_category_raw <- markers %>%                                        # strongest marker per gene
+# strongest marker per gene
+gene_category_raw <- markers %>%
   group_by(gene) %>%
   slice_max(avg_log2FC, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
@@ -55,13 +63,14 @@ gene_category_raw <- markers %>%                                        # strong
     category_raw = cluster
   )
 
-cat("Built gene -> category table:", nrow(gene_category_raw), "genes\n")
+cat("Built gene→category table with", nrow(gene_category_raw), "genes.\n")
 
-rm(markers, seurat_obj)                                                 # cleanup
+rm(markers, seurat_obj)
 gc()
 cat("[3/5] Done.\n\n")
 
-cat("[4/5] Harmonising category names...\n")                            # step 4
+
+cat("[4/5] Harmonising category names...\n")
 
 category_map <- c(
   "fibroblast"                                     = "Fibroblasts",
@@ -73,28 +82,33 @@ category_map <- c(
   "unknown"                                        = "Unknown"
 )
 
-gene_category_raw$category <- category_map[gene_category_raw$category_raw]   # map names
+# map raw categories → harmonised categories
+gene_category_raw$category <- category_map[gene_category_raw$category_raw]
 gene_category_raw$category[is.na(gene_category_raw$category)] <-
   gene_category_raw$category_raw[is.na(gene_category_raw$category)]
 
 cat("[4/5] Done.\n\n")
 
-cat("[5/5] Comparing consensus panel to Traeuble marker genes...\n")    # step 5
 
-traeuble_gene_to_categories <- split(traeuble_markers$level1, traeuble_markers$gene)   # lookup
+cat("[5/5] Comparing consensus panel to Traeuble markers...\n")
 
-comparison_table <- merge(                                              # merge categories
+# lookup table: gene → list of level1 categories
+traeuble_gene_to_categories <- split(traeuble_markers$level1, traeuble_markers$gene)
+
+# merge consensus genes with Seurat-derived categories
+comparison_table <- merge(
   consensus["gene"],
   gene_category_raw[, c("gene", "category")],
   by = "gene",
   all.x = TRUE
 )
 
-comparison_table$category[is.na(comparison_table$category)] <- "No category assigned"   # fill NA
+comparison_table$category[is.na(comparison_table$category)] <- "No category assigned"
 
 comparison_table$is_traeuble_marker <- comparison_table$gene %in% names(traeuble_gene_to_categories)
 
-comparison_table$traeuble_categories <- sapply(comparison_table$gene, function(g) {     # list categories
+# attach Traeuble level1 categories 
+comparison_table$traeuble_categories <- sapply(comparison_table$gene, function(g) {
   ct <- traeuble_gene_to_categories[[g]]
   if (is.null(ct)) "" else paste(sort(unique(ct)), collapse = "; ")
 })
@@ -105,15 +119,15 @@ write.csv(comparison_table,
 
 cat("Saved consensus_vs_traeuble_markers.csv\n")
 
-n_total <- nrow(comparison_table)                                      # stats
+n_total <- nrow(comparison_table)
 n_overlap <- sum(comparison_table$is_traeuble_marker)
 
 cat("\n---- Traeuble Marker Overlap ----\n")
 cat("Consensus panel size:", n_total, "\n")
-cat("Overlap with Traeuble broad marker genes:", n_overlap,
-    "(", round(100 * n_overlap / n_total, 2), "% )\n\n")
+cat("Overlap:", n_overlap, " (", round(100 * n_overlap / n_total, 2), "% )\n\n")
 
-by_category <- traeuble_markers %>%                                    # overlap by cell type
+# overlap by cell-type category
+by_category <- traeuble_markers %>%
   group_by(level1) %>%
   summarise(
     n_marker_genes = n(),
@@ -123,48 +137,4 @@ by_category <- traeuble_markers %>%                                    # overlap
   arrange(desc(n_overlap))
 
 write.csv(by_category,
-          "/Users/tyleradams/Desktop/DISS/consensus_vs_traeuble_by_category.csv",
-          row.names = FALSE)
-
-cat("Saved consensus_vs_traeuble_by_category.csv\n")
-cat("[5/5] Done. Script complete.\n")
-
-cat("Generating combined Traeuble overlap bar plot...\n")               # plotting
-
-df_gene_bar <- data.frame(                                             # gene-level bar
-  category = c("Overlap", "Consensus only"),
-  count = c(
-    sum(comparison_table$is_traeuble_marker),
-    sum(!comparison_table$is_traeuble_marker)
-  )
-)
-
-p_gene <- ggplot(df_gene_bar, aes(x = category, y = count, fill = category)) +
-  geom_bar(stat = "identity") +
-  theme_minimal(base_size = 14) +
-  labs(title = "Gene-level Overlap", x = "", y = "Number of Genes") +
-  scale_fill_manual(values = c("#0072B2", "#999999")) +
-  theme(legend.position = "none")
-
-df_cell_bar <- by_category %>%                                         # cell-type bar
-  mutate(level1 = factor(level1, levels = level1[order(n_overlap, decreasing = TRUE)]))
-
-p_cell <- ggplot(df_cell_bar, aes(x = level1, y = n_overlap, fill = level1)) +
-  geom_bar(stat = "identity") +
-  theme_minimal(base_size = 14) +
-  labs(title = "Cell-type Overlap", x = "Traeuble Level 1 Cell Type", y = "Overlapping Genes") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  scale_fill_brewer(palette = "Set3") +
-  theme(legend.position = "none")
-
-combined_plot <- p_gene + p_cell + plot_layout(ncol = 2)               # combine
-
-ggsave(
-  "/Users/tyleradams/Desktop/DISS/figures/traeuble_combined_overlap_barplot.jpeg",
-  plot = combined_plot,
-  width = 14,
-  height = 6,
-  dpi = 300
-)
-
-cat("Saved traeuble_combined_overlap_barplot.jpeg\n")
+          "/Users/tyleradams/Desktop/DISS/consensus_vs
